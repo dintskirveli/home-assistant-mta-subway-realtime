@@ -1,0 +1,17 @@
+  
+{
+    "domain": "mta_subway",
+    "name": "MTA Subway",
+    "documentation": "https://github.com/dintskirveli/homeassistant-mta-subway",
+    "requirements": [
+        "sortedcontainers==2.1.0",
+        "requests==2.22.0",
+        "requests-toolbelt==0.9.1",
+        "protobuf==3.11.0",
+        "protobuf3-to-dict==0.1.5",
+        "gtfs-realtime-bindings==0.0.6"
+    ],
+    "dependencies": [],
+    "codeowners": ["@dintskirveli"],
+    "homeassistant": "0.97.0"
+}
