@@ -15,12 +15,12 @@ from homeassistant.util import Throttle
 
 import csv
 from google.transit import gtfs_realtime_pb2
-from protobuf_to_dict import protobuf_to_dict
 import json
 from collections import defaultdict
 import math
 from requests_toolbelt.threaded import pool
 import time
+from typing import List
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class MTASubwaySensor(Entity):
         """ Returns the icon used for the frontend.
         """
         try: 
-            line = self._arrivals[0]["line"].lower()
+            line = self._arrivals[0]["line"].lower()[0]
             return "/community_plugin/lovelace-mta-subway-realtime/public/{}.svg".format(line)
         except Exception:
             _LOGGER.debug("Couldn't set entity_picture")
@@ -171,24 +171,30 @@ class MTASubwayData(object):
         _LOGGER.debug("Got station information")
         return result
 
-    def __get_realtime_data(self):
+    def __get_realtime_data(self) -> List[gtfs_realtime_pb2.FeedMessage]:
         _LOGGER.debug("Fetching realtime data...")
         urls = ['http://datamine.mta.info/mta_esi.php?key={}&feed_id={}'.format(self.api_key, feed_id) for feed_id in FEED_IDS]
 
+        for url in urls:
+            _LOGGER.debug("GET {}".format(url))
         p = pool.Pool.from_urls(urls)
         p.join_all()
 
-        feed = gtfs_realtime_pb2.FeedMessage()
         data = []
 
         for response in p.responses():
-            _LOGGER.debug('Fetched realtime data: GET {0}. Returned {1}.'.format(response.request_kwargs['url'], response.status_code))
-            feed.ParseFromString(response.content)
-            obj = protobuf_to_dict(feed)
-            try:
-                data.extend(obj["entity"])
-            except KeyError:
-                _LOGGER.exception("Bad object downloaded:\n{}".format(json.dumps(obj, indent=4)))
+            #_LOGGER.debug('Fetched realtime data: GET {0}. Returned {1}.'.format(response.request_kwargs['url'], response.status_code))
+            if response.status_code != 200:
+                _LOGGER.error("Non-200 response while fetching {}".format(response.request_kwargs['url']))
+            else:
+                try:
+                    feed = gtfs_realtime_pb2.FeedMessage()
+                    feed.ParseFromString(response.content)
+                    data.append(feed)
+
+                except Exception:
+                    _LOGGER.exception("Failure to parse fetched message")
+                    _LOGGER.debug(response.text)
 
         return data
 
@@ -211,23 +217,23 @@ class MTASubwayData(object):
 
         current_time = int(time.time())
 
-        for datum in realtime_data:
+        for feed in realtime_data:
+            header = feed.header
 
-            if "trip_update" in datum:
-                if "trip" in datum["trip_update"] and "stop_time_update" in datum["trip_update"]:
-                    trip = datum["trip_update"]["trip"]
-                    stop_time_update = datum["trip_update"]["stop_time_update"]
+            for entity in feed.entity:
+                if entity.HasField("trip_update"):
+                    trip = entity.trip_update.trip
                     
-                    for stop_time in stop_time_update:
-                        stop_id = stop_time["stop_id"]
-
+                    for stop_time_update in entity.trip_update.stop_time_update:
+                        stop_id = stop_time_update.stop_id
                         stop_id_without_direction = stop_id[:-1]
-                        
+
                         if stop_id in self.watched_stations and stop_id_without_direction in stations:
                             arrivals[stop_id].append({
-                                "time": stop_time["arrival"]["time"],
-                                "line": trip["route_id"],
-                                "time_until": math.ceil(float(stop_time["arrival"]["time"] - current_time) / 60)
+                                "time": stop_time_update.arrival.time,
+                                "line": trip.route_id,
+                                "last_updated": header.timestamp,
+                                "time_until": math.ceil(float(stop_time_update.arrival.time - current_time) / 60)
                                 })
 
         for k,v in arrivals.items():
